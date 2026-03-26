@@ -41,7 +41,192 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7
 npm install -g pnpm
 ```
 
-## 三、CI/CD 流水线
+## 三、本地从 0 到 1 联调流程
+
+这一节只解决一件事：把项目在本地稳定跑起来，并且知道出问题先查哪里。
+
+### 3.1 推荐的两种调试方式
+
+#### 方式 A：源码分离联调（推荐给日常开发）
+
+适合前端、后端分别调试，改代码后反馈最快。
+
+```bash
+# 1. 启动 PostgreSQL / Redis
+# 确保本机已有：
+# PostgreSQL: 127.0.0.1:5432
+# Redis: 127.0.0.1:6379
+
+# 2. 启动后端
+cd backend
+go run ./cmd/server/
+
+# 3. 启动前端
+cd ../frontend
+pnpm install
+pnpm dev
+```
+
+访问：
+
+- 前端开发页：`http://localhost:3000`
+- 后端接口：`http://localhost:8080`
+
+说明：
+
+- `go run ./cmd/server/` 不会内嵌前端页面，前端必须单独执行 `pnpm dev`
+- 前端开发服务器会把 `/api`、`/v1`、`/setup` 代理到后端
+- 如果是首次启动，浏览器会自动进入 `/setup`
+
+#### 方式 B：Docker 一体化联调
+
+适合快速验证服务能否整体跑通。
+
+```bash
+cd deploy
+cp .env.example .env
+
+# 至少补一个值
+# POSTGRES_PASSWORD=你的密码
+
+docker compose -f docker-compose.dev.yml up --build
+```
+
+说明：
+
+- 这种方式会同时拉起 `sub2api + postgres + redis`
+- 镜像构建时会把前端打包进后端，不需要单独启动 `pnpm dev`
+
+### 3.2 第一次本地启动建议顺序
+
+#### 第 1 步：确认数据库和 Redis 已启动
+
+最小检查：
+
+```bash
+# PostgreSQL
+psql -U sub2api -h 127.0.0.1 -d sub2api
+
+# Redis
+redis-cli -h 127.0.0.1 -p 6379 ping
+```
+
+如果 PostgreSQL 报：
+
+```text
+FATAL: role "sub2api" does not exist
+```
+
+先用超级用户创建账号和数据库：
+
+```sql
+CREATE ROLE sub2api WITH LOGIN PASSWORD 'sub2api';
+CREATE DATABASE sub2api OWNER sub2api;
+GRANT ALL PRIVILEGES ON DATABASE sub2api TO sub2api;
+```
+
+#### 第 2 步：先起后端，再起前端
+
+推荐固定约定：
+
+- 后端：`8080`
+- 前端：`3000`
+- PostgreSQL：`5432`
+- Redis：`6379`
+
+#### 第 3 步：首次初始化填写建议
+
+如果走 `/setup`：
+
+- Database Host：`127.0.0.1`
+- Database Port：`5432`
+- Database User：`sub2api`
+- Database Password：`sub2api`
+- Database Name：`sub2api`
+- SSL Mode：`disable`
+- Redis Host：`127.0.0.1`
+- Redis Port：`6379`
+- Redis Password：留空
+- Redis DB：`0`
+- Redis TLS：关闭
+- Admin Email：自己设置
+- Admin Password：自己设置，至少 8 位
+- Server Host：`0.0.0.0`
+- Server Port：`8080`
+- Server Mode：开发环境建议 `debug`
+
+#### 第 4 步：初始化完成后，手动重启后端
+
+这一条非常重要。
+
+源码模式下，setup 完成后页面会提示“服务自动重启”，但本地 `go run` 场景不能依赖这个行为。最稳妥的做法是：
+
+```bash
+# 结束当前 backend 的 go run
+# 然后重新执行
+cd backend
+go run ./cmd/server/
+```
+
+重启后再登录，不要直接依赖 setup 页面跳转结果。
+
+### 3.3 初始化完成后必须人工检查的配置
+
+重点看 `backend/config.yaml`：
+
+```yaml
+server:
+  host: 0.0.0.0
+  port: 8080
+  mode: debug
+
+database:
+  host: 127.0.0.1
+  port: 5432
+  user: sub2api
+  password: sub2api
+  dbname: sub2api
+  sslmode: disable
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  db: 0
+  enable_tls: false
+```
+
+如果这里写成了：
+
+- `server.port: 3000`
+- `database.password: ""`
+- `database.host: localhost`
+
+那后续大概率会出现端口冲突、数据库连接失败、登录 404 / 接口 500 等问题。
+
+### 3.4 本地联调时最常用的自检命令
+
+```bash
+# 看端口被谁占用
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+lsof -nP -iTCP:5432 -sTCP:LISTEN
+lsof -nP -iTCP:6379 -sTCP:LISTEN
+
+# 看后端健康检查
+curl -I http://127.0.0.1:8080/health
+
+# 看 setup 状态
+curl http://127.0.0.1:8080/setup/status
+```
+
+判断逻辑：
+
+- 前端页面能开，但接口全 500：先看后端是否真的还活着
+- 登录 404：大概率还停留在 setup 模式，或者后端根本没启动
+- 前端跑到 `3001`：大概率 `3000` 已经被别的进程占用了
+
+## 四、CI/CD 流水线
 
 ### GitHub Actions Workflows
 
@@ -72,7 +257,7 @@ cd backend && golangci-lint run ./...
 cd frontend && pnpm install
 ```
 
-## 四、常见坑点 & 解决方案
+## 五、常见坑点 & 解决方案
 
 ### 坑 1：pnpm-lock.yaml 必须同步提交
 
@@ -243,7 +428,141 @@ git add ent/       # 生成的文件也要提交
 - [ ] 所有 test stub 补全新接口方法（如果改了 interface）
 - [ ] Ent 生成的代码已提交（如果改了 schema）
 
-## 五、常用命令速查
+---
+
+### 坑 12：README 里的 demo 账号不是你本地初始化账号
+
+**问题**：看到 README 里的 `admin@sub2api.org / admin123`，误以为本地也能直接登录。
+
+**结论**：这是官方演示站账号，不会自动创建到你的本地数据库。
+
+**正确做法**：
+
+- 源码模式：管理员账号是在 `/setup` 里自己创建
+- Docker `AUTO_SETUP`：管理员账号取决于 `.env` 中的 `ADMIN_EMAIL / ADMIN_PASSWORD`
+
+---
+
+### 坑 13：`role "sub2api" does not exist`
+
+**问题**：后端或 `psql` 连接 PostgreSQL 时提示：
+
+```text
+FATAL: role "sub2api" does not exist
+```
+
+**原因**：PostgreSQL 服务虽然起来了，但项目使用的数据库用户还没建。
+
+**解决**：
+
+```sql
+CREATE ROLE sub2api WITH LOGIN PASSWORD 'sub2api';
+CREATE DATABASE sub2api OWNER sub2api;
+GRANT ALL PRIVILEGES ON DATABASE sub2api TO sub2api;
+```
+
+---
+
+### 坑 14：源码模式 setup 完成后，不会像生产那样自动重启
+
+**问题**：setup 页面显示安装成功，但点击登录后接口 404。
+
+**根因**：
+
+- 本地是 `go run ./cmd/server/`
+- setup 完成后代码会尝试“自动重启服务”
+- 该重启逻辑依赖 Linux + systemd，本地开发场景通常不会真正切换到正常服务模式
+
+**解决**：
+
+```bash
+# 手动结束 backend 进程
+# 然后重新启动
+cd backend
+go run ./cmd/server/
+```
+
+---
+
+### 坑 15：setup 页面会把浏览器当前端口写进后端配置
+
+**问题**：初始化后 `backend/config.yaml` 里 `server.port` 变成了 `3000`。
+
+**后果**：
+
+- 后端和前端开发服务器争抢同一个端口
+- Vite 自动切到 `3001`
+- 接口代理和登录链路开始混乱
+
+**解决**：
+
+- setup 时明确把 Server Port 填成 `8080`
+- 初始化后手动检查 `backend/config.yaml`
+
+---
+
+### 坑 16：前端页面能打开，但接口全是 500，不一定是业务逻辑报错
+
+**问题**：页面能访问，但所有接口都报 500。
+
+**根因**：
+
+- 很多时候不是后端代码真的返回了 500
+- 而是前端开发服务器代理不到后端，例如：
+  - 后端没启动
+  - 后端端口写错
+  - 后端启动即退出
+
+**排查顺序**：
+
+```bash
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+curl -I http://127.0.0.1:8080/health
+```
+
+---
+
+### 坑 17：清理 `3000` 端口时，可能误杀后端
+
+**问题**：为了让前端回到 `3000`，直接把占用 `3000` 的进程 kill 掉，结果接口全部挂了。
+
+**原因**：如果 setup 时把后端配置成了 `3000`，那占用 `3000` 的可能是后端，不是前端。
+
+**正确做法**：
+
+```bash
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+```
+
+先看清楚进程名和 PID，再决定要不要杀。
+
+---
+
+### 坑 18：`localhost` 能用，但本地联调仍建议优先写 `127.0.0.1`
+
+**问题**：某些环境下 `localhost` 会优先走 IPv6（如 `::1`），导致连接行为和预期不一致。
+
+**建议**：
+
+- PostgreSQL / Redis / 后端联调统一使用 `127.0.0.1`
+- 特别是配置文件、脚本、初始化表单，优先用 `127.0.0.1`
+
+---
+
+### 坑 19：初始化成功不代表 `config.yaml` 一定正确
+
+**问题**：setup 表面成功，但后端重启后仍然连不上数据库或端口冲突。
+
+**原因**：setup 成功只代表安装流程通过，不代表最终写入的配置完全符合你的本地联调预期。
+
+**建议**：初始化后人工检查以下字段：
+
+- `backend/config.yaml -> server.port`
+- `backend/config.yaml -> database.password`
+- `backend/config.yaml -> database.host`
+- `backend/config.yaml -> redis.host`
+
+## 六、常用命令速查
 
 ### 数据库操作
 
@@ -259,6 +578,31 @@ psql -U postgres -h 127.0.0.1 -c "\l"
 
 # 执行 SQL 文件
 psql -U sub2api -h 127.0.0.1 -d sub2api -f migration.sql
+```
+
+### PostgreSQL / Redis 启停
+
+```bash
+# macOS (Homebrew)
+brew services start postgresql@16
+brew services stop postgresql@16
+brew services start redis
+brew services stop redis
+
+# Docker Compose
+cd deploy
+docker compose -f docker-compose.dev.yml up -d postgres redis
+docker compose -f docker-compose.dev.yml stop postgres redis
+```
+
+### 端口排查
+
+```bash
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:3001 -sTCP:LISTEN
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+lsof -nP -iTCP:5432 -sTCP:LISTEN
+lsof -nP -iTCP:6379 -sTCP:LISTEN
 ```
 
 ### Git 操作
@@ -310,7 +654,7 @@ go test -tags=integration ./...
 golangci-lint run ./...
 ```
 
-## 六、项目结构速览
+## 七、项目结构速览
 
 ```
 sub2api-bmai/
@@ -338,7 +682,7 @@ sub2api-bmai/
     └── CLAUDE.md            # 本文档
 ```
 
-## 七、参考资源
+## 八、参考资源
 
 - [上游仓库](https://github.com/Wei-Shaw/sub2api)
 - [Ent 文档](https://entgo.io/docs/getting-started)
