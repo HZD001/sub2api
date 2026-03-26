@@ -127,9 +127,9 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/LOCAL_DEV.md
 .serena/
 .codex/
 frontend/coverage/
 aicodex
 output/
-

@@ -58,13 +58,36 @@
 - SSH 密钥登录
 - 记录用的密码管理器
 
-## 4. 推荐目录结构
+在继续之前，先确认服务器里的 Docker 和 Compose 已经能用。
+
+直接执行：
+
+```bash
+docker --version
+docker compose version
+```
+
+你只需要确认两件事：
+
+- `docker` 能正常输出版本号
+- `docker compose` 能正常输出版本号
+
+如果这里都没问题，再继续后面的部署步骤。
+
+## 4. 创建部署目录
 
 建议在服务器上使用单独目录：
 
 ```bash
 mkdir -p /opt/sub2api
 cd /opt/sub2api
+pwd
+```
+
+你要确认当前目录已经是：
+
+```text
+/opt/sub2api
 ```
 
 后续所有部署文件都放在这里。
@@ -84,21 +107,35 @@ curl -O https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/.env.exam
 mv docker-compose.local.yml docker-compose.yml
 cp .env.example .env
 mkdir -p data postgres_data redis_data
+ls -la
 ```
+
+执行完后，至少确认目录里有这些内容：
+
+- `docker-compose.yml`
+- `.env`
+- `data/`
+- `postgres_data/`
+- `redis_data/`
 
 ### 5.2 生成密钥
 
-执行三次，分别保存结果：
+建议先生成 3 组随机值。
+
+前两组分别填到：
+
+- `JWT_SECRET`
+- `TOTP_ENCRYPTION_KEY`
+
+执行两次：
 
 ```bash
 openssl rand -hex 32
 ```
 
-你至少需要：
+再执行一次，作为：
 
 - `POSTGRES_PASSWORD`
-- `JWT_SECRET`
-- `TOTP_ENCRYPTION_KEY`
 
 ### 5.3 编辑 `.env`
 
@@ -106,13 +143,13 @@ openssl rand -hex 32
 nano .env
 ```
 
+第一次部署时，先只改最关键的一批，其他先保持默认即可。
+
 至少修改这些字段：
 
 ```env
-BIND_HOST=0.0.0.0
 SERVER_PORT=8080
 SERVER_MODE=release
-RUN_MODE=standard
 TZ=Asia/Singapore
 
 POSTGRES_USER=sub2api
@@ -147,6 +184,8 @@ GATEWAY_MAX_IDLE_CONNS_PER_HOST=64
 - `ADMIN_PASSWORD` 不建议留空
 - `REDIS_PASSWORD` 如果你只在容器内网使用，可以先留空
 - 上面这组连接池参数更适合 `2C2G`
+- `JWT_SECRET` 和 `TOTP_ENCRYPTION_KEY` 都建议使用 `openssl rand -hex 32` 生成
+- 如果你只是先把服务跑起来，不需要第一次就把所有 `.env` 变量全部改完
 
 ## 6. 启动服务
 
@@ -157,7 +196,12 @@ docker compose ps
 docker compose logs -f sub2api
 ```
 
-首次启动时，系统会自动完成：
+这一步重点看两件事：
+
+- `docker compose ps` 里 `sub2api`、`postgres`、`redis` 都是运行状态
+- `docker compose logs -f sub2api` 里没有持续出现 `error`、`panic`、数据库连接失败、Redis 连接失败
+
+首次启动时，系统通常会自动完成：
 
 - PostgreSQL 初始化
 - Redis 初始化
@@ -169,19 +213,40 @@ docker compose logs -f sub2api
 
 ## 7. 初次验证
 
-服务启动后，建议先在服务器本机确认健康检查正常：
+服务启动后，先在服务器本机确认健康检查正常：
 
 ```bash
-curl 127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health
+```
+
+如果这里返回正常，再在浏览器访问：
+
+```text
+http://你的服务器IP:8080
+```
+
+然后使用你在 `.env` 里设置的：
+
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+
+直接登录后台。
+
+如果容器都起来了，但浏览器打不开页面，先检查防火墙：
+
+```bash
+ufw allow 8080/tcp
+ufw status
 ```
 
 建议你至少做这几项验证：
 
 1. 健康检查返回正常
 2. 日志里没有持续报错
-3. 能进入管理后台
-4. 能新增一个上游账号
-5. 能发起一次实际请求
+3. 浏览器能打开登录页
+4. 能使用 `.env` 中的管理员账号登录后台
+5. 能新增一个上游账号
+6. 能发起一次实际请求
 
 如果你已经确认服务器本机可以直连上游，通常不需要在服务器里额外再配本地代理。
 

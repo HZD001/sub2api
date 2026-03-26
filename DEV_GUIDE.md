@@ -2,6 +2,10 @@
 
 > 本文档记录项目环境配置、常见坑点和注意事项，供 Claude Code 和团队成员参考。
 
+快速入口：
+
+- 本地启动专用文档：`docs/LOCAL_DEV.md`
+
 ## 一、项目基本信息
 
 | 项目 | 说明 |
@@ -561,6 +565,77 @@ lsof -nP -iTCP:3000 -sTCP:LISTEN
 - `backend/config.yaml -> database.password`
 - `backend/config.yaml -> database.host`
 - `backend/config.yaml -> redis.host`
+
+---
+
+### 坑 20：`http://localhost:3000/responses` 会 404，不代表后端没实现 Responses API
+
+**问题**：本地用 OpenAI SDK / Codex 调试时，出现：
+
+```text
+unexpected status 404 Not Found: Unknown error, url: http://localhost:3000/responses
+```
+
+**根因**：
+
+- `3000` 是前端 Vite 开发服务器
+- 本地代理只转发 `/api`、`/v1`、`/setup`
+- `/responses` 本身不会被 Vite 代理
+- 所以把客户端直接指到 `http://localhost:3000` 时，SDK 自动拼出来的 `/responses` 就会 404
+
+**正确调用方式**：
+
+- 直接打后端：`http://localhost:8080/v1/responses`
+- 或通过前端代理：`http://localhost:3000/v1/responses`
+
+**关键结论**：
+
+- 如果客户端会自动拼 `/responses`，`baseURL` 应该配置为 `http://localhost:8080/v1`
+- 不要配置成 `http://localhost:3000`
+
+---
+
+### 坑 21：`INSUFFICIENT_BALANCE` 先排查本地用户余额，不要先怀疑上游
+
+**问题**：
+
+```json
+{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}
+```
+
+**根因**：
+
+- 这类错误在本项目里经常是本地中间件先返回的
+- 含义是当前 API Key 绑定用户的本地余额 `<= 0`
+- 不是上游 OpenAI 账户余额不足
+
+**最快确认方式**：
+
+```bash
+curl http://localhost:8080/v1/usage \
+  -H "Authorization: Bearer sk-你的key"
+```
+
+**路径不要混用**：
+
+- `GET /v1/usage`：sub2api 本地网关提供的 API Key 自助查询接口，用来排查本地余额、额度和限流
+- `GET /api/v1/usage`：后台管理接口，走站内登录态 / JWT，不是给网关 API Key 直接调用的
+- Anthropic OAuth 上游 usage 接口在本项目里走的是 `https://api.anthropic.com/api/oauth/usage`，不是 `/v1/usage`
+
+如果你把请求直接打到上游服务，或者把后台管理接口和网关接口混着测，`/v1/usage` 很容易表现成 404。
+
+如果返回的 `balance` / `remaining` 为 `0`，就说明本地钱包余额不足。
+
+**为什么本地很容易踩到这个坑**：
+
+- 初始化管理员默认余额就是 `0`
+- 新用户默认余额通常也是 `0`
+
+**解决方案**：
+
+- 后台用户管理里给对应用户充值
+- 把系统设置里的 `default_balance` 调成一个大于 `0` 的值
+- 纯本地开发联调时，可以切 `simple` 模式跳过余额检查，但不要带到正式环境
 
 ## 六、常用命令速查
 
