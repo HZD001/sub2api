@@ -167,19 +167,19 @@ docker compose logs -f sub2api
 
 如果 `sub2api` 日志里没有持续报错，说明基本已经跑起来了。
 
-## 7. 访问与初次验证
+## 7. 初次验证
 
-如果还没配域名和 HTTPS，可先临时访问：
+服务启动后，建议先在服务器本机确认健康检查正常：
 
-```text
-http://你的服务器IP:8080
+```bash
+curl 127.0.0.1:8080/health
 ```
 
 建议你至少做这几项验证：
 
-1. 能打开登录页
-2. 能用管理员账号登录
-3. 能进入后台
+1. 健康检查返回正常
+2. 日志里没有持续报错
+3. 能进入管理后台
 4. 能新增一个上游账号
 5. 能发起一次实际请求
 
@@ -526,6 +526,94 @@ underscores_in_headers on;
 ```
 
 原因是 `Nginx` 默认会丢弃带下划线的头，例如 `session_id`，这会影响粘性会话。
+
+### 9.1 当前域名方案：`api.nscbm.cn`
+
+如果你当前准备使用的域名是：
+
+```text
+api.nscbm.cn
+```
+
+建议直接使用 `Caddy` 做反向代理和 HTTPS。
+
+### 9.2 DNS 准备
+
+先在域名服务商后台添加一条 `A` 记录：
+
+- 主机记录：`api`
+- 记录值：你的服务器公网 IPv4
+
+在继续之前，先确认解析已经生效。
+
+### 9.3 放行端口
+
+服务器上执行：
+
+```bash
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw status
+```
+
+### 9.4 安装 Caddy
+
+如果服务器是 Ubuntu，可以直接执行：
+
+```bash
+apt update
+apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt update
+apt install -y caddy
+```
+
+### 9.5 写入 Caddy 配置
+
+执行：
+
+```bash
+cat >/etc/caddy/Caddyfile <<'EOF'
+api.nscbm.cn {
+    reverse_proxy 127.0.0.1:8080
+}
+EOF
+```
+
+### 9.6 检查并启动 Caddy
+
+执行：
+
+```bash
+caddy fmt --overwrite /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
+systemctl enable --now caddy
+systemctl restart caddy
+systemctl status caddy --no-pager
+```
+
+### 9.7 验证 HTTPS
+
+可以直接验证：
+
+```bash
+curl -I https://api.nscbm.cn
+```
+
+浏览器访问时，直接使用：
+
+```text
+https://api.nscbm.cn
+```
+
+如果 HTTPS 没起来，优先检查：
+
+- DNS 是否已正确解析到服务器公网 IP
+- `80/443` 是否已放行
+- `caddy validate` 是否通过
+- `systemctl status caddy` 是否正常
+- `journalctl -u caddy -n 80 --no-pager` 是否有证书申请错误
 
 ## 10. 防火墙和安全建议
 
