@@ -28,14 +28,14 @@ var headerWireCasing = map[string]string{
 
 	// Anthropic SDK 自身设置的 header，全小写
 	"anthropic-dangerous-direct-browser-access": "anthropic-dangerous-direct-browser-access",
-	"anthropic-version": "anthropic-version",
-	"anthropic-beta":    "anthropic-beta",
-	"x-app":             "x-app",
-	"content-type":      "content-type",
-	"accept-language":   "accept-language",
-	"sec-fetch-mode":    "sec-fetch-mode",
-	"accept-encoding":   "accept-encoding",
-	"authorization":     "authorization",
+	"anthropic-version":                         "anthropic-version",
+	"anthropic-beta":                            "anthropic-beta",
+	"x-app":                                     "x-app",
+	"content-type":                              "content-type",
+	"accept-language":                           "accept-language",
+	"sec-fetch-mode":                            "sec-fetch-mode",
+	"accept-encoding":                           "accept-encoding",
+	"authorization":                             "authorization",
 }
 
 // headerWireOrder 定义真实 Claude CLI 发送 header 的顺序（基于抓包）。
